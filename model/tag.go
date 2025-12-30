@@ -257,4 +257,11 @@ const (
 	TagMusicBrainzConductorID TagName = "musicbrainz_conductorid"
 	TagMusicBrainzArrangerID  TagName = "musicbrainz_arrangerid"
 	TagMusicBrainzPerformerID TagName = "musicbrainz_performerid"
+
+	// CUE sheet tags
+	TagCUESheet         TagName = "cuesheet"
+	TagCUESubTrack      TagName = "cuesubtrack"
+	TagCUETrackOffset   TagName = "cuetrackoffset"
+	TagCUETrackDuration TagName = "cuetrackduration"
+	TagCUEFile          TagName = "cuefile"
 )

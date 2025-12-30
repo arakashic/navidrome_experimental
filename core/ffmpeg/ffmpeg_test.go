@@ -15,6 +15,10 @@ import (
 	"github.com/navidrome/navidrome/log"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/navidrome/navidrome/log"
+	"github.com/navidrome/navidrome/model"
+	"github.com/navidrome/navidrome/tests"
 )
 
 func TestFFmpeg(t *testing.T) {
@@ -36,21 +40,28 @@ var _ = Describe("ffmpeg", func() {
 		ffmpegPath = "ffmpeg"
 		ffmpegErr = nil
 	})
-	Describe("createFFmpegCommand", func() {
+	Describe("createFFmpegCommandForMedia", func() {
 		It("creates a valid command line", func() {
-			args := createFFmpegCommand("ffmpeg -i %s -b:a %bk mp3 -", "/music library/file.mp3", 123, 0)
-			Expect(args).To(Equal([]string{"ffmpeg", "-i", "/music library/file.mp3", "-b:a", "123k", "mp3", "-"}))
+			mf := model.MediaFile{
+				Path:     "/music library/file.mp3",
+				SubTrack: -1,
+			}
+			args := createFFmpegCommandForMedia("ffmpeg -i %s -b:a %bk -", "mp3", mf.Path, "", &mf, 123, 0)
+			Expect(args).To(Equal([]string{"ffmpeg", "-i", "/music library/file.mp3", "-b:a", "123k", "-f", "mp3", "-"}))
 		})
 		It("handles extra spaces in the command string", func() {
-			args := createFFmpegCommand("ffmpeg    -i %s -b:a    %bk      mp3 -", "/music library/file.mp3", 123, 0)
-			Expect(args).To(Equal([]string{"ffmpeg", "-i", "/music library/file.mp3", "-b:a", "123k", "mp3", "-"}))
+			mf := model.MediaFile{
+				Path:     "/music library/file.mp3",
+				SubTrack: -1,
+			}
+			args := createFFmpegCommandForMedia("ffmpeg    -i %s -b:a    %bk      -", "mp3", mf.Path, "", &mf, 123, 0)
+			Expect(args).To(Equal([]string{"ffmpeg", "-i", "/music library/file.mp3", "-b:a", "123k", "-f", "mp3", "-"}))
 		})
 		Context("when command has time offset param", func() {
 			It("creates a valid command line with offset", func() {
 				args := createFFmpegCommand("ffmpeg -ss %t -i %s -b:a %bk mp3 -", "/music library/file.mp3", 123, 456)
 				Expect(args).To(Equal([]string{"ffmpeg", "-ss", "456", "-i", "/music library/file.mp3", "-b:a", "123k", "mp3", "-"}))
 			})
-
 		})
 		Context("when command does not have time offset param", func() {
 			It("adds time offset before the input file name", func() {
@@ -573,7 +584,12 @@ var _ = Describe("ffmpeg", func() {
 				// Use a command that generates audio indefinitely
 				// -f lavfi uses FFmpeg's built-in audio source
 				// -t 0 means no time limit (runs forever)
-				command := "ffmpeg -f lavfi -i sine=frequency=1000:duration=0 -f mp3 -"
+				command := "ffmpeg -f lavfi -i sine=frequency=1000:duration=0 -"
+
+				mf := model.MediaFile{
+					Path:     "tests/fixtures/test.mp3",
+					SubTrack: -1,
+				}
 
 				// The input file is not used here, but we need to provide a valid path to the Transcode function
 				stream, err := ff.Transcode(ctx, TranscodeOptions{
@@ -604,6 +620,11 @@ var _ = Describe("ffmpeg", func() {
 			It("should handle immediate context cancellation", func() {
 				ctx, cancel := context.WithCancel(GinkgoT().Context())
 				cancel() // Cancel immediately
+
+				mf := model.MediaFile{
+					Path:     "tests/fixtures/test.mp3",
+					SubTrack: -1,
+				}
 
 				// This should fail immediately
 				_, err := ff.Transcode(ctx, TranscodeOptions{
@@ -676,6 +697,11 @@ var _ = Describe("ffmpeg", func() {
 				ff := New()
 				ctx, cancel := context.WithTimeout(GinkgoT().Context(), 5*time.Second)
 				defer cancel()
+
+				mf := model.MediaFile{
+					Path:     "tests/fixtures/test.mp3",
+					SubTrack: -1,
+				}
 
 				// Start a process that will run for a while
 				stream, err := ff.Transcode(ctx, TranscodeOptions{

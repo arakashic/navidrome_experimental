@@ -19,6 +19,7 @@ import (
 	"github.com/navidrome/navidrome/conf"
 	"github.com/navidrome/navidrome/consts"
 	"github.com/navidrome/navidrome/log"
+	"github.com/navidrome/navidrome/model"
 )
 
 // TranscodeOptions contains all parameters for a transcoding operation.
@@ -69,6 +70,17 @@ const (
 	probeCmd            = "ffmpeg %s -f ffmetadata"
 	probeAudioStreamCmd = "ffprobe -v quiet -select_streams a:0 -print_format json -show_streams -show_format %s"
 )
+
+func disableStreamCopy(mf *model.MediaFile, targetFormat string) bool {
+	return mf.Suffix == targetFormat && targetFormat == forbiddenSubTrackTranscodingFormat && isSubTrack(mf)
+}
+
+func forceStreamCopy(mf *model.MediaFile, targetFormat string) bool {
+	if isSubTrack(mf) {
+		return mf.Suffix == targetFormat && targetFormat != "wav" && targetFormat != forbiddenSubTrackTranscodingFormat
+	}
+	return false
+}
 
 type ffmpeg struct{}
 
@@ -128,8 +140,16 @@ func (e *ffmpeg) ExtractImage(ctx context.Context, path string) (io.ReadCloser, 
 	if err := fileExists(path); err != nil {
 		return nil, err
 	}
-	args := createFFmpegCommand(extractImageCmd, path, 0, 0)
-	return e.start(ctx, args)
+	args := createFFmpegCommand(extractImageCmd, path)
+	fileReader := openWVFromISO(path)
+	if fileReader != nil {
+		for i, s := range args {
+			if s == path {
+				args[i] = "-"
+			}
+		}
+	}
+	return e.start(ctx, args, fileReader, "")
 }
 
 func fileExists(path string) error {
@@ -286,6 +306,7 @@ func (e *ffmpeg) start(ctx context.Context, args []string, input ...io.Reader) (
 		j.input = input[0]
 	}
 	j.PipeReader, j.out = io.Pipe()
+	j.in = fileReader
 	err := j.start(ctx)
 	if err != nil {
 		return nil, err
@@ -318,13 +339,48 @@ func (j *ffCmd) start(ctx context.Context) error {
 	}
 	j.cmd = cmd
 
-	if err := cmd.Start(); err != nil {
+	if j.in != nil {
+		var err error
+		j.inWriter, err = cmd.StdinPipe()
+		if err != nil {
+			_ = j.in.Close()
+			log.Error("Can't open ffmpeg stdin pipe", "error", err)
+			return err
+		}
+	}
+
+	if err := j.cmd.Start(); err != nil {
 		return fmt.Errorf("starting cmd: %w", err)
 	}
 	return nil
 }
 
+func (j *ffCmd) streamToInput() {
+	defer func() {
+		log.Debug("close pipe source")
+		_ = j.in.Close()
+		_ = j.inWriter.Close()
+	}()
+
+	wrote, err := io.Copy(j.inWriter, j.in)
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			log.Error("Error copying input stream to ffmpeg", "error", err)
+		}
+		return
+	}
+	log.Debug("Wrote data", "bytes", wrote)
+}
+
 func (j *ffCmd) wait() {
+	if j.intermediatePath != "" {
+		defer func() {
+			_ = os.RemoveAll(path.Dir(j.intermediatePath))
+		}()
+	}
+	if j.inWriter != nil {
+		j.streamToInput()
+	}
 	if err := j.cmd.Wait(); err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			errMsg := fmt.Sprintf("%s exited with non-zero status code: %d", j.args[0], exitErr.ExitCode())
@@ -336,6 +392,19 @@ func (j *ffCmd) wait() {
 			_ = j.out.CloseWithError(fmt.Errorf("waiting %s cmd: %w", j.args[0], err))
 		}
 		return
+	}
+	if j.intermediatePath != "" {
+		f, err := os.Open(j.intermediatePath)
+		if err != nil {
+			_ = j.out.CloseWithError(fmt.Errorf("failed to open intermediate media '%s': %w", j.intermediatePath, err))
+			return
+		}
+		_, err = io.Copy(j.out, f)
+		if err != nil {
+			_ = j.out.CloseWithError(fmt.Errorf("failed to copy data from intermediate media '%s': %w", j.intermediatePath, err))
+			return
+		}
+		_ = f.Close()
 	}
 	_ = j.out.Close()
 }
@@ -520,6 +589,97 @@ func createFFmpegCommand(cmd, path string, maxBitRate, offset int) []string {
 			args = append(args, s)
 		}
 	}
+
+	return result
+}
+
+// Path will always be an absolute path
+func createFFmpegCommand(cmd, path string) []string {
+	split := strings.Split(cmd, " ")
+	for i, s := range split {
+		switch s {
+		case "%s":
+			split[i] = path
+		default:
+		}
+	}
+	return split
+}
+
+func createFFmpegCommandForMedia(cmd string, format string, sourcePath string, intermediatePath string, mf *model.MediaFile, maxBitRate int, beginOffset int) []string {
+	offsetIndex := -1
+	destFormat := ""
+	copyIndex := -1
+	inputParsed := false
+
+	var args []string
+
+	split := strings.Split(cmd, " ")
+	for i, s := range split {
+		var preArgs []string
+		var postArgs []string
+		switch s {
+		case "-vn":
+			copyIndex = len(args)
+		case "-i":
+			// Need insert start offset and duration before input file
+			if isSubTrack(mf) {
+				preArgs = makeRangeParams(mf, beginOffset)
+			}
+			inputParsed = true
+		case "-":
+			if destFormat == "" {
+				destFormat = format
+				preArgs = append(preArgs, "-f", destFormat)
+			}
+			// Insert metadata before last param for sub-tracks
+			if isSubTrack(mf) {
+				preArgs = append(preArgs, makeMetadataParams(mf)...)
+				if intermediatePath != "" {
+					s = intermediatePath
+				}
+			}
+		case "%t":
+			if !isSubTrack(mf) {
+				s = fmt.Sprintf("%v", beginOffset)
+				offsetIndex = -1
+			}
+		case "%s":
+			s = sourcePath // mf.Path or '-'
+			if beginOffset > 0 && !isSubTrack(mf) {
+				offsetIndex = len(args) + 1
+			}
+		case "-f":
+			// Next param is the output format
+			if inputParsed {
+				destFormat = split[i+1]
+			}
+		default:
+			if strings.Contains(s, "%b") {
+				s = strings.ReplaceAll(s, "%b", strconv.Itoa(maxBitRate))
+			}
+		}
+
+		if len(preArgs) > 0 {
+			args = append(args, preArgs...)
+		}
+		if s != "" {
+			args = append(args, s)
+		}
+		if len(postArgs) > 0 {
+			args = append(args, postArgs...)
+		}
+	}
+
+	if offsetIndex != -1 {
+		offsetParams := []string{"-ss", fmt.Sprintf("%v", beginOffset)}
+		args = append(args[:offsetIndex], append(offsetParams, args[offsetIndex:]...)...)
+	}
+
+	if copyIndex != -1 && forceStreamCopy(mf, destFormat) {
+		args = append(args[:copyIndex], append([]string{"-c:a copy"}, args[copyIndex:]...)...)
+	}
+
 	return args
 }
 

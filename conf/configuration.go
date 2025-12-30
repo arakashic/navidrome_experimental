@@ -857,6 +857,7 @@ func setViperDefaults() {
 	viper.SetDefault("podcasts.downloadconcurrency", 3)
 	viper.SetDefault("podcasts.defaultdownloadpolicy", "none")
 	viper.SetDefault("podcasts.maxdownloadsizemb", 0)
+	viper.SetDefault("scanner.cuesheetsupport", consts.CUEPreferEmbedded)
 	viper.SetDefault("subsonic.appendsubtitle", true)
 	viper.SetDefault("subsonic.appendalbumversion", true)
 	viper.SetDefault("subsonic.artistparticipations", false)
