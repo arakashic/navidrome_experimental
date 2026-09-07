@@ -8,11 +8,13 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/navidrome/navidrome/conf"
+	intMime "github.com/navidrome/navidrome/conf/mime"
 	"github.com/navidrome/navidrome/consts"
 	"github.com/navidrome/navidrome/core/ffmpeg"
 	"github.com/navidrome/navidrome/log"
@@ -57,7 +59,14 @@ type streamJob struct {
 }
 
 func (j *streamJob) Key() string {
-	return fmt.Sprintf("%s.%s.%d.%d.%d.%d.%s.%d", j.mf.ID, j.mf.UpdatedAt.Format(time.RFC3339Nano), j.bitRate, j.sampleRate, j.bitDepth, j.channels, j.format, j.offset)
+	return fmt.Sprintf("%s.%s.%d.%d.%d.%d.%d.%s.%d", j.mf.ID, j.mf.UpdatedAt.Format(time.RFC3339Nano), j.mf.SubTrack, j.bitRate, j.sampleRate, j.bitDepth, j.channels, j.format, j.offset)
+}
+
+func cueStreamFormat(mf *model.MediaFile) string {
+	if slices.Contains(intMime.LosslessFormats, mf.Suffix) {
+		return "flac"
+	}
+	return conf.Server.DefaultDownsamplingFormat
 }
 
 // NewStream creates a Stream for the given MediaFile and Request. It handles both raw streaming (no transcoding)
@@ -76,7 +85,10 @@ func (ms *mediaStreamer) NewStream(ctx context.Context, mf *model.MediaFile, req
 
 	format = req.Format
 	bitRate = req.BitRate
-	if format == "" || format == "raw" {
+	if mf.IsCueSubTrack() && (format == "" || format == "raw") {
+		format = cueStreamFormat(mf)
+		bitRate = 0
+	} else if format == "" || format == "raw" {
 		format = "raw"
 		bitRate = 0
 	}
@@ -258,14 +270,17 @@ func NewTranscodingCache() TranscodingCache {
 			}
 
 			out, err := job.ms.transcoder.Transcode(transcodingCtx, ffmpeg.TranscodeOptions{
-				Command:    command,
-				Format:     job.format,
-				FilePath:   job.filePath,
-				BitRate:    job.bitRate,
-				SampleRate: job.sampleRate,
-				BitDepth:   job.bitDepth,
-				Channels:   job.channels,
-				Offset:     job.offset,
+				Command:          command,
+				Format:           job.format,
+				FilePath:         job.filePath,
+				BitRate:          job.bitRate,
+				SampleRate:       job.sampleRate,
+				BitDepth:         job.bitDepth,
+				Channels:         job.channels,
+				Offset:           job.offset,
+				SubTrackOffset:   job.mf.Offset,
+				SubTrackDuration: job.mf.Duration,
+				MediaFile:        job.mf,
 			})
 			if err != nil {
 				release()

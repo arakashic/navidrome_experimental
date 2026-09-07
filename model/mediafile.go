@@ -91,7 +91,7 @@ type MediaFile struct {
 	RGTrackPeak          *float64 `structs:"rg_track_peak" json:"rgTrackPeak"`
 	Offset               float32  `structs:"offset" json:"offset"`                 // Track offset in seconds for sub-tracks
 	SubTrack             int      `structs:"sub_track" json:"sub_track"`           // Index of the sub-track in a multi-track media, -1 if not a sub-track
-	CUEFile              string   `structs:"cuefile" json:"cuefile" hash:"ignore"` // CUE file if this is a sub-track mediafile created from an external CUE sheet
+	CUEFile              string   `structs:"cuefile" json:"cuefile" hash:"ignore"` // External CUE filename or EmbeddedCUEFile for embedded sheets
 
 	Tags         Tags         `structs:"tags" json:"tags,omitempty" hash:"ignore"`       // All imported tags from the original file
 	Participants Participants `structs:"participants" json:"participants" hash:"ignore"` // All artists that participated in this track
@@ -100,6 +100,12 @@ type MediaFile struct {
 	BirthTime time.Time `structs:"birth_time" json:"birthTime" hash:"ignore"` // Time of file creation (ctime)
 	CreatedAt time.Time `structs:"created_at" json:"createdAt" hash:"ignore"` // Time this entry was created in the DB
 	UpdatedAt time.Time `structs:"updated_at" json:"updatedAt" hash:"ignore"` // Time of file last update (mtime)
+}
+
+const EmbeddedCUEFile = ":embedded:"
+
+func (mf MediaFile) IsCueSubTrack() bool {
+	return mf.CUEFile != ""
 }
 
 func (mf MediaFile) FullTitle() string {
@@ -337,7 +343,7 @@ func (mfs MediaFiles) ToAlbum() Album {
 		// Calculated attributes based on aggregations
 		a.Duration += m.Duration
 		// Don't sum sub tracks sizes
-		if m.SubTrack < 0 || (m.SubTrack >= 0 && i == 0) {
+		if !m.IsCueSubTrack() || (m.IsCueSubTrack() && i == 0) {
 			a.Size += m.Size
 		}
 		years = append(years, m.Year)

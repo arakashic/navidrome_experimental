@@ -57,6 +57,17 @@ var _ = Describe("MediaStreamer", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(s.Seekable()).To(BeTrue())
 		})
+		It("extracts a lossless CUE subtrack as FLAC", func() {
+			mf.Suffix = "flac"
+			mf.SubTrack = 1
+			mf.CUEFile = model.EmbeddedCUEFile
+			mf.Offset = 30
+			mf.Duration = 20
+			s, err := streamer.NewStream(ctx, mf, stream.Request{Format: "raw"})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(s.Seekable()).To(BeFalse())
+			Expect(s.ContentType()).To(Equal("audio/flac"))
+		})
 		It("returns a NON seekable stream if transcode is required", func() {
 			s, err := streamer.NewStream(ctx, mf, stream.Request{Format: "mp3", BitRate: 64})
 			Expect(err).To(BeNil())

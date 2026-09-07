@@ -166,6 +166,7 @@ type scannerOptions struct {
 	FollowSymlinks        bool     // Whether to follow symlinks when scanning directories
 	IgnoreDotFolders      bool     // Whether to ignore folders whose name starts with a dot when scanning
 	PurgeMissing          string   // Values: "never", "always", "full"
+	CUESheetSupport       string
 }
 
 type podcastsOptions struct {

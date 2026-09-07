@@ -13,12 +13,9 @@ import (
 
 	"github.com/navidrome/navidrome/conf"
 	"github.com/navidrome/navidrome/log"
+	"github.com/navidrome/navidrome/model"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/navidrome/navidrome/log"
-	"github.com/navidrome/navidrome/model"
-	"github.com/navidrome/navidrome/tests"
 )
 
 func TestFFmpeg(t *testing.T) {
@@ -40,22 +37,14 @@ var _ = Describe("ffmpeg", func() {
 		ffmpegPath = "ffmpeg"
 		ffmpegErr = nil
 	})
-	Describe("createFFmpegCommandForMedia", func() {
+	Describe("createFFmpegCommand", func() {
 		It("creates a valid command line", func() {
-			mf := model.MediaFile{
-				Path:     "/music library/file.mp3",
-				SubTrack: -1,
-			}
-			args := createFFmpegCommandForMedia("ffmpeg -i %s -b:a %bk -", "mp3", mf.Path, "", &mf, 123, 0)
-			Expect(args).To(Equal([]string{"ffmpeg", "-i", "/music library/file.mp3", "-b:a", "123k", "-f", "mp3", "-"}))
+			args := createFFmpegCommand("ffmpeg -i %s -b:a %bk mp3 -", "/music library/file.mp3", 123, 0)
+			Expect(args).To(Equal([]string{"ffmpeg", "-i", "/music library/file.mp3", "-b:a", "123k", "mp3", "-"}))
 		})
 		It("handles extra spaces in the command string", func() {
-			mf := model.MediaFile{
-				Path:     "/music library/file.mp3",
-				SubTrack: -1,
-			}
-			args := createFFmpegCommandForMedia("ffmpeg    -i %s -b:a    %bk      -", "mp3", mf.Path, "", &mf, 123, 0)
-			Expect(args).To(Equal([]string{"ffmpeg", "-i", "/music library/file.mp3", "-b:a", "123k", "-f", "mp3", "-"}))
+			args := createFFmpegCommand("ffmpeg    -i %s -b:a    %bk      mp3 -", "/music library/file.mp3", 123, 0)
+			Expect(args).To(Equal([]string{"ffmpeg", "-i", "/music library/file.mp3", "-b:a", "123k", "mp3", "-"}))
 		})
 		Context("when command has time offset param", func() {
 			It("creates a valid command line with offset", func() {
@@ -189,6 +178,35 @@ var _ = Describe("ffmpeg", func() {
 				"-v", "0",
 				"-f", "mp3",
 				"-",
+			}))
+		})
+
+		It("limits a CUE subtrack to its requested range", func() {
+			mf := &model.MediaFile{
+				Title:       "Track Two",
+				Artist:      "Test Artist",
+				Album:       "Test Album",
+				AlbumArtist: "Test Album Artist",
+				TrackNumber: 2,
+				DiscNumber:  1,
+				SubTrack:    1,
+				CUEFile:     model.EmbeddedCUEFile,
+			}
+			args := buildDynamicArgs(TranscodeOptions{
+				Format:           "flac",
+				FilePath:         "/music/album.flac",
+				Offset:           2,
+				SubTrackOffset:   60.5,
+				SubTrackDuration: 29.5,
+				MediaFile:        mf,
+			})
+			Expect(args).To(Equal([]string{
+				"ffmpeg", "-ss", "62.500000", "-i", "/music/album.flac", "-t", "27.500000",
+				"-map", "0:a:0", "-map_metadata", "0", "-map_metadata", "0:s:a:0",
+				"-metadata", "title=Track Two", "-metadata", "artist=Test Artist",
+				"-metadata", "album=Test Album", "-metadata", "track=2",
+				"-metadata", "cuesheet=", "-metadata", "album_artist=Test Album Artist",
+				"-metadata", "disc=1", "-c:a", "flac", "-v", "0", "-f", "flac", "-",
 			}))
 		})
 
@@ -584,12 +602,7 @@ var _ = Describe("ffmpeg", func() {
 				// Use a command that generates audio indefinitely
 				// -f lavfi uses FFmpeg's built-in audio source
 				// -t 0 means no time limit (runs forever)
-				command := "ffmpeg -f lavfi -i sine=frequency=1000:duration=0 -"
-
-				mf := model.MediaFile{
-					Path:     "tests/fixtures/test.mp3",
-					SubTrack: -1,
-				}
+				command := "ffmpeg -f lavfi -i sine=frequency=1000:duration=0 -f mp3 -"
 
 				// The input file is not used here, but we need to provide a valid path to the Transcode function
 				stream, err := ff.Transcode(ctx, TranscodeOptions{
@@ -620,11 +633,6 @@ var _ = Describe("ffmpeg", func() {
 			It("should handle immediate context cancellation", func() {
 				ctx, cancel := context.WithCancel(GinkgoT().Context())
 				cancel() // Cancel immediately
-
-				mf := model.MediaFile{
-					Path:     "tests/fixtures/test.mp3",
-					SubTrack: -1,
-				}
 
 				// This should fail immediately
 				_, err := ff.Transcode(ctx, TranscodeOptions{
@@ -697,11 +705,6 @@ var _ = Describe("ffmpeg", func() {
 				ff := New()
 				ctx, cancel := context.WithTimeout(GinkgoT().Context(), 5*time.Second)
 				defer cancel()
-
-				mf := model.MediaFile{
-					Path:     "tests/fixtures/test.mp3",
-					SubTrack: -1,
-				}
 
 				// Start a process that will run for a while
 				stream, err := ff.Transcode(ctx, TranscodeOptions{

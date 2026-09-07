@@ -24,14 +24,17 @@ import (
 
 // TranscodeOptions contains all parameters for a transcoding operation.
 type TranscodeOptions struct {
-	Command    string // DB command template (used to detect custom vs default)
-	Format     string // Target format (mp3, opus, aac, flac)
-	FilePath   string
-	BitRate    int // kbps, 0 = codec default
-	SampleRate int // 0 = no constraint
-	Channels   int // 0 = no constraint
-	BitDepth   int // 0 = no constraint; valid values: 16, 24, 32
-	Offset     int // seconds
+	Command          string // DB command template (used to detect custom vs default)
+	Format           string // Target format (mp3, opus, aac, flac)
+	FilePath         string
+	BitRate          int // kbps, 0 = codec default
+	SampleRate       int // 0 = no constraint
+	Channels         int // 0 = no constraint
+	BitDepth         int // 0 = no constraint; valid values: 16, 24, 32
+	Offset           int // seconds
+	SubTrackOffset   float32
+	SubTrackDuration float32
+	MediaFile        *model.MediaFile
 }
 
 // AudioProbeResult contains authoritative audio stream properties from ffprobe.
@@ -71,17 +74,6 @@ const (
 	probeAudioStreamCmd = "ffprobe -v quiet -select_streams a:0 -print_format json -show_streams -show_format %s"
 )
 
-func disableStreamCopy(mf *model.MediaFile, targetFormat string) bool {
-	return mf.Suffix == targetFormat && targetFormat == forbiddenSubTrackTranscodingFormat && isSubTrack(mf)
-}
-
-func forceStreamCopy(mf *model.MediaFile, targetFormat string) bool {
-	if isSubTrack(mf) {
-		return mf.Suffix == targetFormat && targetFormat != "wav" && targetFormat != forbiddenSubTrackTranscodingFormat
-	}
-	return false
-}
-
 type ffmpeg struct{}
 
 func (e *ffmpeg) Transcode(ctx context.Context, opts TranscodeOptions) (io.ReadCloser, error) {
@@ -91,11 +83,21 @@ func (e *ffmpeg) Transcode(ctx context.Context, opts TranscodeOptions) (io.ReadC
 	if err := fileExists(opts.FilePath); err != nil {
 		return nil, err
 	}
+	var input io.Reader
+	if opts.MediaFile != nil && opts.MediaFile.IsCueSubTrack() {
+		if reader := openWVFromISO(opts.FilePath); reader != nil {
+			input = reader
+			opts.FilePath = "pipe:0"
+		}
+	}
 	var args []string
 	if isDefaultCommand(opts.Format, opts.Command) {
 		args = buildDynamicArgs(opts)
 	} else {
 		args = buildTemplateArgs(opts)
+	}
+	if input != nil {
+		return e.start(ctx, args, input)
 	}
 	return e.start(ctx, args)
 }
@@ -140,7 +142,7 @@ func (e *ffmpeg) ExtractImage(ctx context.Context, path string) (io.ReadCloser, 
 	if err := fileExists(path); err != nil {
 		return nil, err
 	}
-	args := createFFmpegCommand(extractImageCmd, path)
+	args := createFFmpegCommand(extractImageCmd, path, 0, 0)
 	fileReader := openWVFromISO(path)
 	if fileReader != nil {
 		for i, s := range args {
@@ -149,7 +151,10 @@ func (e *ffmpeg) ExtractImage(ctx context.Context, path string) (io.ReadCloser, 
 			}
 		}
 	}
-	return e.start(ctx, args, fileReader, "")
+	if fileReader != nil {
+		return e.start(ctx, args, fileReader)
+	}
+	return e.start(ctx, args)
 }
 
 func fileExists(path string) error {
@@ -306,7 +311,6 @@ func (e *ffmpeg) start(ctx context.Context, args []string, input ...io.Reader) (
 		j.input = input[0]
 	}
 	j.PipeReader, j.out = io.Pipe()
-	j.in = fileReader
 	err := j.start(ctx)
 	if err != nil {
 		return nil, err
@@ -339,47 +343,15 @@ func (j *ffCmd) start(ctx context.Context) error {
 	}
 	j.cmd = cmd
 
-	if j.in != nil {
-		var err error
-		j.inWriter, err = cmd.StdinPipe()
-		if err != nil {
-			_ = j.in.Close()
-			log.Error("Can't open ffmpeg stdin pipe", "error", err)
-			return err
-		}
-	}
-
 	if err := j.cmd.Start(); err != nil {
 		return fmt.Errorf("starting cmd: %w", err)
 	}
 	return nil
 }
 
-func (j *ffCmd) streamToInput() {
-	defer func() {
-		log.Debug("close pipe source")
-		_ = j.in.Close()
-		_ = j.inWriter.Close()
-	}()
-
-	wrote, err := io.Copy(j.inWriter, j.in)
-	if err != nil {
-		if !errors.Is(err, io.EOF) {
-			log.Error("Error copying input stream to ffmpeg", "error", err)
-		}
-		return
-	}
-	log.Debug("Wrote data", "bytes", wrote)
-}
-
 func (j *ffCmd) wait() {
-	if j.intermediatePath != "" {
-		defer func() {
-			_ = os.RemoveAll(path.Dir(j.intermediatePath))
-		}()
-	}
-	if j.inWriter != nil {
-		j.streamToInput()
+	if closer, ok := j.input.(io.Closer); ok {
+		defer closer.Close()
 	}
 	if err := j.cmd.Wait(); err != nil {
 		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
@@ -392,19 +364,6 @@ func (j *ffCmd) wait() {
 			_ = j.out.CloseWithError(fmt.Errorf("waiting %s cmd: %w", j.args[0], err))
 		}
 		return
-	}
-	if j.intermediatePath != "" {
-		f, err := os.Open(j.intermediatePath)
-		if err != nil {
-			_ = j.out.CloseWithError(fmt.Errorf("failed to open intermediate media '%s': %w", j.intermediatePath, err))
-			return
-		}
-		_, err = io.Copy(j.out, f)
-		if err != nil {
-			_ = j.out.CloseWithError(fmt.Errorf("failed to copy data from intermediate media '%s': %w", j.intermediatePath, err))
-			return
-		}
-		_ = f.Close()
 	}
 	_ = j.out.Close()
 }
@@ -459,17 +418,59 @@ func isDefaultCommand(format, command string) bool {
 	return defaultCommands[format] == command
 }
 
+func subTrackRange(opts TranscodeOptions) (float32, float32, bool) {
+	if opts.MediaFile == nil || !opts.MediaFile.IsCueSubTrack() {
+		return 0, 0, false
+	}
+	start := opts.SubTrackOffset + float32(opts.Offset)
+	duration := opts.SubTrackDuration - float32(opts.Offset)
+	if duration < 0 {
+		duration = 0
+	}
+	return start, duration, true
+}
+
+func secondsArg(value float32) string {
+	return strconv.FormatFloat(float64(value), 'f', 6, 32)
+}
+
+func subTrackMetadataArgs(mf *model.MediaFile) []string {
+	if mf == nil || !mf.IsCueSubTrack() {
+		return nil
+	}
+	args := []string{
+		"-metadata", "title=" + mf.Title,
+		"-metadata", "artist=" + mf.Artist,
+		"-metadata", "album=" + mf.Album,
+		"-metadata", "track=" + strconv.Itoa(mf.TrackNumber),
+		"-metadata", "cuesheet=",
+	}
+	if mf.AlbumArtist != "" {
+		args = append(args, "-metadata", "album_artist="+mf.AlbumArtist)
+	}
+	if mf.DiscNumber > 0 {
+		args = append(args, "-metadata", "disc="+strconv.Itoa(mf.DiscNumber))
+	}
+	return args
+}
+
 // buildDynamicArgs programmatically constructs ffmpeg arguments for known formats,
 // including all transcoding parameters (bitrate, sample rate, channels).
 func buildDynamicArgs(opts TranscodeOptions) []string {
 	cmdPath, _ := ffmpegCmd()
 	args := []string{cmdPath}
 
-	if opts.Offset > 0 {
+	start, duration, isSubTrack := subTrackRange(opts)
+	if isSubTrack && start > 0 {
+		args = append(args, "-ss", secondsArg(start))
+	} else if opts.Offset > 0 {
 		args = append(args, "-ss", strconv.Itoa(opts.Offset))
 	}
 
 	args = append(args, "-i", opts.FilePath)
+	if isSubTrack {
+		args = append(args, "-t", secondsArg(duration))
+	}
 	args = append(args, "-map", "0:a:0")
 
 	// Preserve source tags. -map_metadata 0 copies format-level tags (MP3/FLAC);
@@ -479,6 +480,7 @@ func buildDynamicArgs(opts TranscodeOptions) []string {
 	// pulling metadata from an embedded cover-art/video stream at index 0. Note:
 	// adts (AAC) output cannot hold tags, so these are a no-op there.
 	args = append(args, "-map_metadata", "0", "-map_metadata", "0:s:a:0")
+	args = append(args, subTrackMetadataArgs(opts.MediaFile)...)
 
 	if codec, ok := formatCodecMap[opts.Format]; ok {
 		args = append(args, "-c:a", codec)
@@ -505,7 +507,18 @@ func buildDynamicArgs(opts TranscodeOptions) []string {
 // core/stream/codec.go codecMax* helpers), so injecting them unconditionally is safe —
 // ffmpeg honors the last occurrence of a duplicate flag.
 func buildTemplateArgs(opts TranscodeOptions) []string {
-	args := createFFmpegCommand(opts.Command, opts.FilePath, opts.BitRate, opts.Offset)
+	start, duration, isSubTrack := subTrackRange(opts)
+	var args []string
+	if isSubTrack {
+		args = createFFmpegCommandAt(opts.Command, opts.FilePath, opts.BitRate, secondsArg(start))
+		args = injectBeforeOutput(args, "-t", secondsArg(duration))
+		metadata := subTrackMetadataArgs(opts.MediaFile)
+		for i := 0; i < len(metadata); i += 2 {
+			args = injectBeforeOutput(args, metadata[i], metadata[i+1])
+		}
+	} else {
+		args = createFFmpegCommand(opts.Command, opts.FilePath, opts.BitRate, opts.Offset)
+	}
 	return injectDynamicAudioFlags(args, opts)
 }
 
@@ -566,10 +579,14 @@ func bitDepthToSampleFmt(bitDepth int) string {
 
 // Path will always be an absolute path
 func createFFmpegCommand(cmd, path string, maxBitRate, offset int) []string {
+	return createFFmpegCommandAt(cmd, path, maxBitRate, strconv.Itoa(offset))
+}
+
+func createFFmpegCommandAt(cmd, path string, maxBitRate int, offset string) []string {
 	var args []string
 	for _, s := range fixCmd(cmd) {
 		if strings.Contains(s, "%s") {
-			if offset > 0 && !strings.Contains(cmd, "%t") {
+			if offset != "0" && !strings.Contains(cmd, "%t") {
 				// Pre-input seeking: ffmpeg seeks at the demuxer level (fast)
 				// instead of decoding all frames up to the offset (slow).
 				insertAt := len(args)
@@ -579,107 +596,16 @@ func createFFmpegCommand(cmd, path string, maxBitRate, offset int) []string {
 						break
 					}
 				}
-				args = slices.Insert(args, insertAt, "-ss", strconv.Itoa(offset))
+				args = slices.Insert(args, insertAt, "-ss", offset)
 			}
 			s = strings.ReplaceAll(s, "%s", path)
 			args = append(args, s)
 		} else {
-			s = strings.ReplaceAll(s, "%t", strconv.Itoa(offset))
+			s = strings.ReplaceAll(s, "%t", offset)
 			s = strings.ReplaceAll(s, "%b", strconv.Itoa(maxBitRate))
 			args = append(args, s)
 		}
 	}
-
-	return result
-}
-
-// Path will always be an absolute path
-func createFFmpegCommand(cmd, path string) []string {
-	split := strings.Split(cmd, " ")
-	for i, s := range split {
-		switch s {
-		case "%s":
-			split[i] = path
-		default:
-		}
-	}
-	return split
-}
-
-func createFFmpegCommandForMedia(cmd string, format string, sourcePath string, intermediatePath string, mf *model.MediaFile, maxBitRate int, beginOffset int) []string {
-	offsetIndex := -1
-	destFormat := ""
-	copyIndex := -1
-	inputParsed := false
-
-	var args []string
-
-	split := strings.Split(cmd, " ")
-	for i, s := range split {
-		var preArgs []string
-		var postArgs []string
-		switch s {
-		case "-vn":
-			copyIndex = len(args)
-		case "-i":
-			// Need insert start offset and duration before input file
-			if isSubTrack(mf) {
-				preArgs = makeRangeParams(mf, beginOffset)
-			}
-			inputParsed = true
-		case "-":
-			if destFormat == "" {
-				destFormat = format
-				preArgs = append(preArgs, "-f", destFormat)
-			}
-			// Insert metadata before last param for sub-tracks
-			if isSubTrack(mf) {
-				preArgs = append(preArgs, makeMetadataParams(mf)...)
-				if intermediatePath != "" {
-					s = intermediatePath
-				}
-			}
-		case "%t":
-			if !isSubTrack(mf) {
-				s = fmt.Sprintf("%v", beginOffset)
-				offsetIndex = -1
-			}
-		case "%s":
-			s = sourcePath // mf.Path or '-'
-			if beginOffset > 0 && !isSubTrack(mf) {
-				offsetIndex = len(args) + 1
-			}
-		case "-f":
-			// Next param is the output format
-			if inputParsed {
-				destFormat = split[i+1]
-			}
-		default:
-			if strings.Contains(s, "%b") {
-				s = strings.ReplaceAll(s, "%b", strconv.Itoa(maxBitRate))
-			}
-		}
-
-		if len(preArgs) > 0 {
-			args = append(args, preArgs...)
-		}
-		if s != "" {
-			args = append(args, s)
-		}
-		if len(postArgs) > 0 {
-			args = append(args, postArgs...)
-		}
-	}
-
-	if offsetIndex != -1 {
-		offsetParams := []string{"-ss", fmt.Sprintf("%v", beginOffset)}
-		args = append(args[:offsetIndex], append(offsetParams, args[offsetIndex:]...)...)
-	}
-
-	if copyIndex != -1 && forceStreamCopy(mf, destFormat) {
-		args = append(args[:copyIndex], append([]string{"-c:a copy"}, args[copyIndex:]...)...)
-	}
-
 	return args
 }
 

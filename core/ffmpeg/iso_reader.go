@@ -9,7 +9,6 @@ import (
 	"github.com/kdomanski/iso9660"
 
 	"github.com/navidrome/navidrome/log"
-	"github.com/navidrome/navidrome/model"
 )
 
 var ErrorNotAnISO = errors.New("not iso file")
@@ -112,10 +111,6 @@ func openWV(path string) io.ReadCloser {
 	}
 
 	return &reader
-}
-
-func isSubTrack(mf *model.MediaFile) bool {
-	return mf.SubTrack > -1
 }
 
 func openWVFromISO(path string) io.ReadCloser {

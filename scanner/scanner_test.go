@@ -1328,11 +1328,38 @@ FILE "disc2.flac" FLAC
 			Expect(allTracks).To(HaveLen(2))
 			for _, track := range allTracks {
 				Expect(track.Tags).ToNot(HaveKey("cuesheet"), "Tags should not contain embedded cuesheet data")
-				Expect(track.CUEFile).To(BeEmpty(), "CUEFile should be empty for embedded CUE support")
+				Expect(track.CUEFile).To(Equal(model.EmbeddedCUEFile))
 				Expect(track.SubTrack).To(BeNumerically(">=", 0))
 				Expect(track.AlbumArtist).To(ContainSubstring("Test Artist"))
 				Expect(track.AlbumArtist).To(ContainSubstring("Thanateros"))
 			}
+		})
+
+		It("should match multi-file embedded CUE tracks to their audio files", func() {
+			conf.Server.Scanner.CUESheetSupport = consts.CUEEmbedded
+			multiFileCUE := `PERFORMER "Test Artist"
+TITLE "Test Album"
+FILE "disc1.flac" FLAC
+  TRACK 01 AUDIO
+    TITLE "Disc One"
+    INDEX 01 00:00:00
+FILE "disc2.flac" FLAC
+  TRACK 02 AUDIO
+    TITLE "Disc Two"
+    INDEX 01 00:00:00`
+			createFS(fstest.MapFS{
+				"music/Test Artist/Test Album/disc1.flac": image1(_t{"cuesheet": multiFileCUE}),
+				"music/Test Artist/Test Album/disc2.flac": image2(_t{"cuesheet": multiFileCUE}),
+			})
+
+			Expect(runScanner(ctx, true)).To(Succeed())
+			allTracks, err := ds.MediaFile(ctx).GetAll(model.QueryOptions{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(allTracks).To(HaveLen(2))
+			Expect(allTracks).To(ConsistOf(
+				And(HaveField("Title", "Disc One"), HaveField("Path", "music/Test Artist/Test Album/disc1.flac")),
+				And(HaveField("Title", "Disc Two"), HaveField("Path", "music/Test Artist/Test Album/disc2.flac")),
+			))
 		})
 
 		It("should handle folders with multiple audio files and CUE sheets (embedded,external)", func() {
@@ -1366,7 +1393,7 @@ FILE "disc2.flac" FLAC
 			Expect(allTracks).To(HaveLen(2))
 			for _, track := range allTracks {
 				Expect(track.Tags).ToNot(HaveKey("cuesheet"), "Tags should not contain embedded cuesheet data")
-				Expect(track.CUEFile).To(BeEmpty(), "CUEFile should be empty for embedded CUE support")
+				Expect(track.CUEFile).To(Equal(model.EmbeddedCUEFile))
 				Expect(track.SubTrack).To(BeNumerically(">=", 0))
 				Expect(track.AlbumArtist).To(ContainSubstring("Test Artist"))
 				Expect(track.AlbumArtist).To(ContainSubstring("Thanateros"))

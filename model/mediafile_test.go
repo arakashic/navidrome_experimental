@@ -93,9 +93,9 @@ var _ = Describe("MediaFiles", func() {
 			When("we have subtracks", func() {
 				BeforeEach(func() {
 					mfs = MediaFiles{
-						{Duration: 100.2, Size: 2024, SubTrack: 0},
-						{Duration: 200.2, Size: 2024, SubTrack: 1},
-						{Duration: 150.6, Size: 2024, SubTrack: 2},
+						{Duration: 100.2, Size: 2024, SubTrack: 0, CUEFile: EmbeddedCUEFile},
+						{Duration: 200.2, Size: 2024, SubTrack: 1, CUEFile: EmbeddedCUEFile},
+						{Duration: 150.6, Size: 2024, SubTrack: 2, CUEFile: EmbeddedCUEFile},
 					}
 				})
 				It("calculates the aggregates correctly", func() {

@@ -2,6 +2,7 @@ package cue
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -344,4 +345,12 @@ func TestCueReader(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCueReaderUTF8BOM(t *testing.T) {
+	input := "\ufeff\nREM COMMENT \"UTF-8 BOM\"\nFILE \"album.flac\" FLAC\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n"
+	cueSheet, err := ReadCue(strings.NewReader(input))
+	require.NoError(t, err)
+	require.Len(t, cueSheet.File, 1)
+	require.Len(t, cueSheet.File[0].Tracks, 1)
 }

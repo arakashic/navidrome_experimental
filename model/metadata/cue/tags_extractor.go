@@ -26,9 +26,13 @@ func makeDuration(d time.Duration) string {
 
 func (e *TagsExtractor) Extract(cueSheet *Cuesheet, cueFile string) ([]model.RawTags, error) {
 	result := make([]model.RawTags, 0)
+	cueSource := cueFile
+	if cueSource == "" {
+		cueSource = model.EmbeddedCUEFile
+	}
 
 	for _, file := range cueSheet.File {
-		if cueFile != "" && file.FileName != path.Base(e.md.FilePath()) {
+		if file.FileName != path.Base(e.md.FilePath()) {
 			continue
 		}
 		totalTracks := len(file.Tracks)
@@ -36,7 +40,7 @@ func (e *TagsExtractor) Extract(cueSheet *Cuesheet, cueFile string) ([]model.Raw
 		for i, t := range file.Tracks {
 			tags := make(model.RawTags)
 
-			addTagValue(model.TagCUEFile, tags, cueFile)
+			addTagValue(model.TagCUEFile, tags, cueSource)
 			addTagValue(model.TagTitle, tags, t.Title)
 			addTagValue(model.TagCUESubTrack, tags, strconv.Itoa(i))
 			addTagValue(model.TagTrackArtist, tags, t.Performer, cueSheet.Performer)

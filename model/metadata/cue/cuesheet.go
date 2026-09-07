@@ -84,9 +84,8 @@ var (
 )
 
 var (
-	catalogRegex = regexp.MustCompile(`^\d{12,14}$`)
-	isrcRegex    = regexp.MustCompile(`^[\da-zA-Z]{12}$`)
-	cueRegex     = regexp.MustCompile(`^\S+( )+\S+.+`)
+	isrcRegex = regexp.MustCompile(`^[\da-zA-Z]{12}$`)
+	cueRegex  = regexp.MustCompile(`^\S+( )+\S+.+`)
 )
 
 // TrackIndex data
@@ -234,10 +233,11 @@ func readCUECatalog(cuesheet *Cuesheet, line string) error {
 	if len(cuesheet.Catalog) > 0 {
 		return ErrorDuplicateCatalog
 	}
-	if !catalogRegex.MatchString(line) {
+	value, err := readString(&line)
+	if err != nil || value == "" {
 		return ErrorInvalidCatalog
 	}
-	cuesheet.Catalog = line
+	cuesheet.Catalog = value
 	return nil
 }
 
@@ -353,7 +353,7 @@ func readFileFields(file *File, line string) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("TRACK number: %w", err)
 		}
-		if len(file.Tracks) != int(track.TrackNumber)-1 {
+		if len(file.Tracks) > 0 && track.TrackNumber != file.Tracks[len(file.Tracks)-1].TrackNumber+1 {
 			return false, ErrorTrackOutOfOrder
 		}
 		track.TrackDataType, err = readString(&line)
@@ -533,6 +533,10 @@ func ReadCue(r io.Reader) (*Cuesheet, error) {
 		line := s.Text()
 
 		if firstLine {
+			line = strings.TrimPrefix(line, "\ufeff")
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
 			firstLine = false
 			if !cueRegex.MatchString(line) {
 				return nil, ErrorParseCUE

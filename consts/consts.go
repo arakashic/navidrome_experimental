@@ -119,6 +119,15 @@ const (
 	EntityPodcastChannel = "podcastChannel"
 )
 
+// CUE scan options
+const (
+	CUEDisable        = ""
+	CUEEmbedded       = "embedded"
+	CUEExternal       = "external"
+	CUEPreferEmbedded = "embedded,external"
+	CUEPreferExternal = "external,embedded"
+)
+
 const (
 	AlbumPlayCountModeAbsolute   = "absolute"
 	AlbumPlayCountModeNormalized = "normalized"
