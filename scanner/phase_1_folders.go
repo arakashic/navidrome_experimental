@@ -412,6 +412,7 @@ func (p *phaseFolders) loadTagsFromFiles(entry *folderEntry, toImport map[string
 			return err
 		}
 		for filePath, info := range allInfo {
+			firstTrack := len(entry.tracks)
 			md := metadata.New(filePath, info)
 			cueRawTags := p.extractTagsFromCUE(md, entry)
 			if len(cueRawTags) > 0 {
@@ -421,12 +422,18 @@ func (p *phaseFolders) loadTagsFromFiles(entry *folderEntry, toImport map[string
 					entry.tracks = append(entry.tracks, track)
 					p.trackProcess(trackMd, entry, &track, getPrevMediaFile(toImport[filePath], i), uniqueTags)
 				}
-				continue
+			} else {
+				track := md.ToMediaFile(entry.job.lib.ID, entry.id)
+				entry.tracks = append(entry.tracks, track)
+				p.trackProcess(md, entry, &track, getPrevMediaFile(toImport[filePath], 0), uniqueTags)
 			}
-
-			track := md.ToMediaFile(entry.job.lib.ID, entry.id)
-			entry.tracks = append(entry.tracks, track)
-			p.trackProcess(md, entry, &track, getPrevMediaFile(toImport[filePath], 0), uniqueTags)
+			for _, previous := range toImport[filePath] {
+				if !slices.ContainsFunc(entry.tracks[firstTrack:], func(track model.MediaFile) bool {
+					return track.SubTrack == previous.SubTrack
+				}) {
+					entry.missingTracks = append(entry.missingTracks, previous)
+				}
+			}
 		}
 	}
 	entry.tags = slices.Collect(maps.Values(uniqueTags))

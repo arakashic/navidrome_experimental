@@ -1335,6 +1335,33 @@ FILE "disc2.flac" FLAC
 			}
 		})
 
+		It("replaces an unsplit image when a renamed embedded CUE becomes enabled", func() {
+			createFS(fstest.MapFS{
+				"music/Test Artist/Test Album/renamed.flac": image1(),
+			})
+			conf.Server.Scanner.CUESheetSupport = consts.CUEDisable
+			Expect(runScanner(ctx, true)).To(Succeed())
+			oldTracks, err := ds.MediaFile(ctx).GetAll()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(oldTracks).To(HaveLen(1))
+
+			conf.Server.Scanner.CUESheetSupport = consts.CUEEmbedded
+			Expect(runScanner(ctx, true)).To(Succeed())
+			tracks, err := ds.MediaFile(ctx).GetAll(model.QueryOptions{Filters: squirrel.Eq{"missing": false}})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(tracks).To(HaveLen(3))
+			for _, track := range tracks {
+				Expect(track.CUEFile).To(Equal(model.EmbeddedCUEFile))
+			}
+			oldTrack, err := ds.MediaFile(ctx).Get(oldTracks[0].ID)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(oldTrack.Missing).To(BeTrue())
+			Expect(runScanner(ctx, true)).To(Succeed())
+			tracks, err = ds.MediaFile(ctx).GetAll(model.QueryOptions{Filters: squirrel.Eq{"missing": false}})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(tracks).To(HaveLen(3))
+		})
+
 		It("should match multi-file embedded CUE tracks to their audio files", func() {
 			conf.Server.Scanner.CUESheetSupport = consts.CUEEmbedded
 			multiFileCUE := `PERFORMER "Test Artist"

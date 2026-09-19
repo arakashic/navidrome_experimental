@@ -33,7 +33,9 @@ func (e *TagsExtractor) Extract(cueSheet *Cuesheet, cueFile string) ([]model.Raw
 
 	for _, file := range cueSheet.File {
 		if file.FileName != path.Base(e.md.FilePath()) {
-			continue
+			if cueFile != "" || len(cueSheet.File) != 1 || !embeddedTracksFit(file, e.md.AudioProperties().Duration) {
+				continue
+			}
 		}
 		totalTracks := len(file.Tracks)
 		lastTrack := totalTracks - 1
@@ -102,6 +104,26 @@ func (e *TagsExtractor) Extract(cueSheet *Cuesheet, cueFile string) ([]model.Raw
 	}
 
 	return result, nil
+}
+
+func embeddedTracksFit(file File, duration time.Duration) bool {
+	if duration <= 0 || len(file.Tracks) == 0 {
+		return false
+	}
+	previous := time.Duration(-1)
+	for _, track := range file.Tracks {
+		start := track.GetStartOffset()
+		if start <= previous || start >= duration {
+			return false
+		}
+		for _, index := range track.Index {
+			if index.Frame.Duration() >= duration {
+				return false
+			}
+		}
+		previous = start
+	}
+	return true
 }
 
 func addTagValue(name model.TagName, tags model.RawTags, values ...string) {
