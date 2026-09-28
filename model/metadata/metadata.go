@@ -426,6 +426,10 @@ func sanitizeAll(filePath string, tags model.Tags) model.Tags {
 const defaultMaxTagLength = 1024
 
 func sanitize(filePath string, tagName model.TagName, tag model.TagConf, value string) string {
+	// CUE text is a structured document; truncation can silently remove tracks.
+	if tagName == model.TagCUESheet {
+		return value
+	}
 	// First truncate the value to the maximum length
 	maxLength := cmp.Or(tag.MaxLength, defaultMaxTagLength)
 	if len(value) > maxLength {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing/fstest"
 	"time"
 
@@ -1334,6 +1335,53 @@ FILE "disc2.flac" FLAC
 				Expect(track.AlbumArtist).To(ContainSubstring("Thanateros"))
 			}
 		})
+
+		It("imports every track from an embedded CUE larger than 10240 bytes", func() {
+			conf.Server.Scanner.CUESheetSupport = consts.CUEEmbedded
+			var cueText strings.Builder
+			cueText.WriteString("FILE \"album.flac\" WAVE\n")
+			for i := 1; i <= 80; i++ {
+				fmt.Fprintf(&cueText, "  TRACK %02d AUDIO\n    TITLE \"Track %02d\"\n    REM COMMENT %s\n    INDEX 01 %02d:00:00\n", i, i, strings.Repeat("x", 240), i-1)
+			}
+			Expect(cueText.Len()).To(BeNumerically(">", 10240))
+			createFS(fstest.MapFS{
+				"music/album.flac": template(_t{"duration": int64(4800), "cuesheet": cueText.String()})(),
+			})
+			Expect(runScanner(ctx, true)).To(Succeed())
+			tracks, err := ds.MediaFile(ctx).GetAll()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(tracks).To(HaveLen(80))
+			Expect(tracks).To(ContainElement(And(HaveField("Title", "Track 80"), HaveField("Offset", float32(4740)), HaveField("Duration", float32(60)))))
+		})
+
+		DescribeTable("uses fallbacks for empty CUE fields",
+			func(mode, trackPerformer, albumPerformer, fileArtist, fileAlbumArtist, expected string) {
+				conf.Server.Scanner.CUESheetSupport = mode
+				cueText := fmt.Sprintf("PERFORMER \"%s\"\nTITLE \"\"\nSONGWRITER \"\"\nFILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    PERFORMER \"%s\"\n    TITLE \"\"\n    SONGWRITER \"\"\n    INDEX 01 00:00:00\n", albumPerformer, trackPerformer)
+				files := fstest.MapFS{
+					"music/album.flac": template(_t{"duration": int64(120), "artist": fileArtist, "albumartist": fileAlbumArtist, "album": "File Album", "cuesheet": cueText})(),
+				}
+				if mode == consts.CUEExternal {
+					files["music/album.cue"] = &fstest.MapFile{Data: []byte(cueText)}
+				}
+				createFS(files)
+				Expect(runScanner(ctx, true)).To(Succeed())
+				tracks, err := ds.MediaFile(ctx).GetAll()
+				Expect(err).ToNot(HaveOccurred())
+				Expect(tracks).To(HaveLen(1))
+				Expect(tracks[0].SubTrack).To(Equal(0))
+				Expect(tracks[0].Artist).To(Equal(expected))
+				Expect(tracks[0].Album).To(Equal("File Album"))
+				Expect(tracks[0].Title).To(Equal("Track 01"))
+			},
+			Entry("track performer takes priority", consts.CUEEmbedded, "Track Artist", "Album Artist", "File Artist", "File Album Artist", "Track Artist"),
+			Entry("album performer", consts.CUEEmbedded, "", "Album Artist", "File Artist", "", "Album Artist"),
+			Entry("file artist", consts.CUEEmbedded, "", "", "File Artist", "File Album Artist", "File Artist"),
+			Entry("file album artist", consts.CUEEmbedded, "", "", "", "File Album Artist", "File Album Artist"),
+			Entry("unknown artist", consts.CUEEmbedded, "", "", "", "", consts.UnknownArtist),
+			Entry("whitespace performer", consts.CUEEmbedded, "   ", "  ", "File Artist", "", "File Artist"),
+			Entry("external sheet", consts.CUEExternal, "", "", "File Artist", "", "File Artist"),
+		)
 
 		It("replaces an unsplit image when a renamed embedded CUE becomes enabled", func() {
 			createFS(fstest.MapFS{

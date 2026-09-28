@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/navidrome/navidrome/model"
@@ -43,9 +44,10 @@ func (e *TagsExtractor) Extract(cueSheet *Cuesheet, cueFile string) ([]model.Raw
 			tags := make(model.RawTags)
 
 			addTagValue(model.TagCUEFile, tags, cueSource)
-			addTagValue(model.TagTitle, tags, t.Title)
+			addTagValue(model.TagTitle, tags, t.Title, fmt.Sprintf("Track %02d", t.TrackNumber))
 			addTagValue(model.TagCUESubTrack, tags, strconv.Itoa(i))
-			addTagValue(model.TagTrackArtist, tags, t.Performer, cueSheet.Performer)
+			addTagValue(model.TagTrackArtist, tags, t.Performer, cueSheet.Performer,
+				e.md.String(model.TagTrackArtist), e.md.String(model.TagAlbumArtist))
 			addTagValue(model.TagAlbum, tags, cueSheet.Title)
 			addTagValue(model.TagGenre, tags, cueSheet.Rem.Genre())
 			if t.Rem.TotalDiscs() > 0 {
@@ -128,6 +130,7 @@ func embeddedTracksFit(file File, duration time.Duration) bool {
 
 func addTagValue(name model.TagName, tags model.RawTags, values ...string) {
 	for _, v := range values {
+		v = strings.TrimSpace(v)
 		if v != "" {
 			tags[name.String()] = append(tags[name.String()], v)
 			return

@@ -1,6 +1,8 @@
 package cue
 
 import (
+	"errors"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +11,38 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCueEmptyOptionalFields(t *testing.T) {
+	input := "PERFORMER \"\"\nTITLE \"\"\nSONGWRITER \"\"\nFILE \"album.flac\" WAVE\n" +
+		"  TRACK 01 AUDIO\n    TITLE \"\"\n    PERFORMER \"\"\n    SONGWRITER \"\"\n    INDEX 01 00:00:00\n"
+	sheet, err := ReadCue(strings.NewReader(input))
+	require.NoError(t, err)
+	require.Len(t, sheet.File[0].Tracks, 1)
+	require.Empty(t, sheet.Performer)
+	require.Empty(t, sheet.File[0].Tracks[0].Performer)
+}
+
+func TestCueLongLine(t *testing.T) {
+	input := "FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n" +
+		"    REM COMMENT " + strings.Repeat("a", 128*1024) +
+		"\n  TRACK 02 AUDIO\n    INDEX 01 01:00:00"
+	sheet, err := ReadCue(strings.NewReader(input))
+	require.NoError(t, err)
+	require.Len(t, sheet.File[0].Tracks, 2)
+}
+
+type failingCueReader struct{}
+
+func (failingCueReader) Read([]byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+func TestCueReadFailureRejectsPartialSheet(t *testing.T) {
+	input := io.MultiReader(strings.NewReader("FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n"), failingCueReader{})
+	sheet, err := ReadCue(input)
+	require.True(t, errors.Is(err, io.ErrUnexpectedEOF))
+	require.Nil(t, sheet)
+}
 
 func TestFrame_Duration(t *testing.T) {
 	tests := []struct {
@@ -214,7 +248,7 @@ func TestCueReader(t *testing.T) {
 		},
 		{
 			inputFile: "parser-invalid-text.cue",
-			error:     ErrorInvalidText,
+			error:     ErrorMissingFile,
 		},
 		{
 			inputFile: "parser-missing-file.cue",

@@ -197,14 +197,11 @@ func ReadFromFile(filePath string) (*Cuesheet, error) {
 	return ReadCue(file)
 }
 
-func setTagOrError(value *string, newValue string, err error, noEmpty bool) error {
+func setTagOrError(value *string, newValue string, err error) error {
 	if len(*value) > 0 {
 		return err
 	}
-	*value = newValue
-	if noEmpty && *value == "" {
-		return ErrorInvalidText
-	}
+	*value = strings.TrimSpace(newValue)
 	return nil
 }
 
@@ -246,7 +243,7 @@ func readCUECdTextFile(cuesheet *Cuesheet, line string) error {
 	if err != nil {
 		log.Warn("Unclosed quote in CDTEXTFILE, using rest of line", "value", value)
 	}
-	return setTagOrError(&cuesheet.CdTextFile, value, ErrorDuplicateCdTextFile, false)
+	return setTagOrError(&cuesheet.CdTextFile, value, ErrorDuplicateCdTextFile)
 }
 
 func readCUETitle(cuesheet *Cuesheet, line string) error {
@@ -254,7 +251,7 @@ func readCUETitle(cuesheet *Cuesheet, line string) error {
 	if err != nil {
 		log.Warn("Unclosed quote in TITLE, using rest of line", "value", value)
 	}
-	err = setTagOrError(&cuesheet.Title, value, ErrorDuplicateTitle, true)
+	err = setTagOrError(&cuesheet.Title, value, ErrorDuplicateTitle)
 	if errors.Is(err, ErrorDuplicateTitle) {
 		log.Error(fmt.Sprintf("already has title '%s' / '%s'", cuesheet.Title, line))
 	}
@@ -266,7 +263,7 @@ func readCUEPerformer(cuesheet *Cuesheet, line string) error {
 	if err != nil {
 		log.Warn("Unclosed quote in PERFORMER, using rest of line", "value", value)
 	}
-	return setTagOrError(&cuesheet.Performer, value, ErrorDuplicatePerformer, true)
+	return setTagOrError(&cuesheet.Performer, value, ErrorDuplicatePerformer)
 }
 
 func readCUESongwriter(cuesheet *Cuesheet, line string) error {
@@ -274,7 +271,7 @@ func readCUESongwriter(cuesheet *Cuesheet, line string) error {
 	if err != nil {
 		log.Warn("Unclosed quote in SONGWRITER, using rest of line", "value", value)
 	}
-	return setTagOrError(&cuesheet.SongWriter, value, ErrorDuplicateSongwriter, true)
+	return setTagOrError(&cuesheet.SongWriter, value, ErrorDuplicateSongwriter)
 }
 
 func readCUEPreGap(cuesheet *Cuesheet, line string) error {
@@ -417,7 +414,7 @@ func readTrackStringField(value *string, line string, duplicateErr error, fieldN
 	if !closed {
 		log.Warn(fmt.Sprintf("Unclosed quote in track %s, using rest of line", fieldName), "value", v)
 	}
-	return setTagOrError(value, v, duplicateErr, true)
+	return setTagOrError(value, v, duplicateErr)
 }
 
 func readTrackPreGap(track *Track, line string) error {
@@ -522,15 +519,22 @@ func readTrackFields(track *Track, line string) error {
 
 // ReadCue loads and parses CUESHEET from reader
 func ReadCue(r io.Reader) (*Cuesheet, error) {
-	s := bufio.NewScanner(r)
+	reader := bufio.NewReader(r)
 	cuesheet := &Cuesheet{}
 
 	firstLine := true
 	var fields ExpectedFields
 	trackJustInserted := false
 
-	for s.Scan() {
-		line := s.Text()
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return nil, fmt.Errorf("reading CUE: %w", readErr)
+		}
+		if line == "" && errors.Is(readErr, io.EOF) {
+			break
+		}
+		line = strings.TrimRight(line, "\r\n")
 
 		if firstLine {
 			line = strings.TrimPrefix(line, "\ufeff")

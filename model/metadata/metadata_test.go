@@ -123,6 +123,14 @@ var _ = Describe("Metadata", func() {
 				Expect(pair[0].Value()).To(HaveLen(1048570))
 			})
 
+			It("preserves complete structured CUE text beyond display-tag limits", func() {
+				cueText := "REM COMMENT " + strings.Repeat("長い説明", 20000) +
+					"\nFILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n"
+				props.Tags = model.RawTags{"CUESHEET": {cueText}}
+				md = metadata.New(filePath, props)
+				Expect(md.String(model.TagCUESheet)).To(Equal(cueText))
+			})
+
 			It("should split multiple values", func() {
 				props.Tags = model.RawTags{
 					"Genre": {"Rock/Pop;;Punk"},

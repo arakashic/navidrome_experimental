@@ -210,7 +210,6 @@ main:
     aliases: [ cuetrackduration ]
   cuesheet:
     aliases: [ cuesheet ]
-    maxLength: 10240
 
 # Additional tags. You can add new tags without the need to modify the code. They will be available as fields
 # for smart playlists
