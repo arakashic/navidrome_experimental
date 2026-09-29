@@ -34,6 +34,26 @@ func TestCUECacheMetadata(t *testing.T) {
 	}
 }
 
+func TestCUEOutputFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name, suffix, requested, expected string
+		cueTrack                          int
+	}{
+		{name: "FLAC", suffix: "flac", cueTrack: 1, requested: "raw", expected: "flac"},
+		{name: "WAV", suffix: "wav", cueTrack: 1, requested: "raw", expected: "wav"},
+		{name: "APE", suffix: "ape", cueTrack: 1, requested: "raw", expected: "flac"},
+		{name: "ALAC", suffix: "m4a", cueTrack: 1, requested: "raw", expected: "flac"},
+		{name: "WavPack", suffix: "wv", cueTrack: 1, requested: "raw", expected: "flac"},
+		{name: "explicit format", suffix: "wv", cueTrack: 1, requested: "wav", expected: "wav"},
+		{name: "ordinary file", suffix: "m4a", requested: "raw", expected: "m4a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mf := model.MediaFile{Suffix: tc.suffix, CueTrack: tc.cueTrack}
+			assert.Equal(t, tc.expected, OutputFormat(&mf, tc.requested))
+		})
+	}
+}
+
 func TestCUECacheSegments(t *testing.T) {
 	mf := model.MediaFile{ID: "ape-track", Suffix: "ape", CueTrack: 1, CueEndSample: 44100}
 	key := (&streamJob{mf: &mf, format: "flac"}).Key()

@@ -42,3 +42,41 @@ var _ = Describe("CUE disc metadata", func() {
 		Entry("total only retains source disc", "REM TOTALDISCS 4\n", "2", 2, "4"),
 	)
 })
+
+var _ = Describe("CUE source formats", func() {
+	DescribeTable("accepts supported lossless codecs and rejects lossy lookalikes",
+		func(suffix, codec string, accepted bool) {
+			_, filePath, _ := tests.TempFile(GinkgoT(), "cue", "."+suffix)
+			info, err := os.Stat(filePath)
+			Expect(err).NotTo(HaveOccurred())
+			name := "album." + suffix
+			md := metadata.New(name, metadata.Info{
+				FileInfo: testFileInfo{info},
+				AudioProperties: metadata.AudioProperties{
+					Duration: time.Minute, SampleRate: 44100, Channels: 2, BitDepth: 24, Codec: codec,
+				},
+			})
+			sheet, err := cue.ReadCue(strings.NewReader("FILE \"" + name + "\" WAVE\n" +
+				"  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n"))
+			Expect(err).NotTo(HaveOccurred())
+			tracks, err := md.CUETracks(sheet, 1, "folder")
+			if accepted {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tracks).To(HaveLen(1))
+				Expect(tracks[0].Suffix).To(Equal(suffix))
+			} else {
+				Expect(err).To(HaveOccurred())
+				Expect(tracks).To(BeNil())
+			}
+		},
+		Entry("FLAC", "flac", "flac", true),
+		Entry("WAV", "wav", "pcm", true),
+		Entry("APE", "ape", "ape", true),
+		Entry("ALAC in M4A", "m4a", "alac", true),
+		Entry("ALAC in MP4", "mp4", "alac", true),
+		Entry("AAC in M4A", "m4a", "aac", false),
+		Entry("AAC in MP4", "mp4", "aac", false),
+		Entry("WavPack", "wv", "wavpack", true),
+		Entry("WavPack fallback codec name", "wv", "wv", true),
+	)
+})

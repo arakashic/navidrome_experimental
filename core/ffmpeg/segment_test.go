@@ -68,9 +68,14 @@ var _ = Describe("CUE coarse seeking", func() {
 		ctx := GinkgoT().Context()
 		dir := GinkgoT().TempDir()
 		source := filepath.Join(dir, "source."+sourceFormat)
-		codec := "flac"
-		if sourceFormat == "wav" {
+		codec := sourceFormat
+		switch sourceFormat {
+		case "wav":
 			codec = "pcm_s24le"
+		case "m4a":
+			codec = "alac"
+		case "wv":
+			codec = "wavpack"
 		}
 		output, err := exec.CommandContext(ctx, binary, "-v", "error", "-f", "lavfi", "-i",
 			fmt.Sprintf("aevalsrc=0.3*sin(2*PI*997*t)|0.2*sin(2*PI*1231*t):s=%d:d=12", rate),
@@ -98,7 +103,12 @@ var _ = Describe("CUE coarse seeking", func() {
 		Expect(os.WriteFile(name, data, 0600)).To(Succeed())
 		frameSize := 2 * 3
 		Expect(decode(name)).To(Equal(original[int(start)*frameSize : int(end)*frameSize]))
-	}, Entry("WAV to WAV", "wav", "wav"), Entry("FLAC to FLAC", "flac", "flac"))
+	},
+		Entry("WAV to WAV", "wav", "wav"),
+		Entry("FLAC to FLAC", "flac", "flac"),
+		Entry("ALAC to FLAC", "m4a", "flac"),
+		Entry("WavPack to FLAC", "wv", "flac"),
+	)
 })
 
 var _ = Describe("APE CUE sample preservation", func() {

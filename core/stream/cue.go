@@ -14,7 +14,11 @@ func OutputFormat(mf *model.MediaFile, requested string) string {
 	if requested != "" && requested != "raw" {
 		return requested
 	}
-	if mf.CueTrack > 0 && strings.EqualFold(mf.Suffix, "ape") {
+	if mf.CueTrack > 0 {
+		suffix := strings.ToLower(mf.Suffix)
+		if suffix == "flac" || suffix == "wav" {
+			return suffix
+		}
 		return "flac"
 	}
 	return mf.Suffix
