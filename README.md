@@ -82,6 +82,25 @@ report fork-specific issues upstream. For anything about Navidrome itself, the u
 
 ## Installation
 
+### Personal sample-exact CUE branch
+
+The `setup/folder-sample-exact` branch adds integer-sample CUE slicing and guarded
+pre-seeking to the existing folder, podcast, and corrected-parser fork. It ports
+the extraction approach evaluated in
+[hholst80/navidrome#3](https://github.com/hholst80/navidrome/pull/3).
+
+Keep `ND_SCANNER_CUESHEETSUPPORT=external,embedded`. The database migration adds
+sample boundaries and requests a full rescan while retaining existing track and
+folder identities. Eligible sources are FLAC, WAV, APE, ALAC, and non-DSD WavPack
+at sample rates divisible by 75. Other sources retain the existing playback path.
+Multi-file sheets, uncapped CUE reading, empty-field fallbacks, and guarded
+renamed embedded sheets remain supported by the original scanner and parser.
+
+The first track in each source file retains its lead-in; subsequent INDEX 00
+audio remains at the end of the preceding track. Original-quality CUE playback
+uses FLAC. Extraction still finishes a temporary output before playback begins,
+and the exact path accepts the built-in transcoding commands.
+
 For this fork specifically, see [Getting navidrome-experimental](#getting-navidrome-experimental) above. For
 general installation concepts (reverse proxies, environment variables, building from source, etc.) that apply the
 same way here as upstream, see instructions on the [project's website](https://www.navidrome.org/docs/installation/).

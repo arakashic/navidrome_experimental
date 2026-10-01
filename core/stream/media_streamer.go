@@ -2,6 +2,8 @@ package stream
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -59,11 +61,16 @@ type streamJob struct {
 }
 
 func (j *streamJob) Key() string {
-	return fmt.Sprintf("%s.%s.%d.%d.%d.%d.%d.%s.%d", j.mf.ID, j.mf.UpdatedAt.Format(time.RFC3339Nano), j.mf.SubTrack, j.bitRate, j.sampleRate, j.bitDepth, j.channels, j.format, j.offset)
+	key := fmt.Sprintf("%s.%s.%d.%d.%d.%d.%d.%s.%d", j.mf.ID, j.mf.UpdatedAt.Format(time.RFC3339Nano), j.mf.SubTrack, j.bitRate, j.sampleRate, j.bitDepth, j.channels, j.format, j.offset)
+	if segment := cueSampleSegment(j.mf); segment != nil {
+		tags, _ := json.Marshal(segment.Tags)
+		key += fmt.Sprintf(".%d.%d.%d.%x", segment.StartSample, segment.EndSample, segment.SourceRate, sha256.Sum256(tags))
+	}
+	return key
 }
 
 func cueStreamFormat(mf *model.MediaFile) string {
-	if slices.Contains(intMime.LosslessFormats, mf.Suffix) {
+	if mf.CueSourceRate > 0 || slices.Contains(intMime.LosslessFormats, mf.Suffix) {
 		return "flac"
 	}
 	return conf.Server.DefaultDownsamplingFormat
@@ -88,6 +95,12 @@ func (ms *mediaStreamer) NewStream(ctx context.Context, mf *model.MediaFile, req
 	if mf.IsCueSubTrack() && (format == "" || format == "raw") {
 		format = cueStreamFormat(mf)
 		bitRate = 0
+		if mf.CueSourceRate > 0 {
+			req.SampleRate, req.Channels = mf.SampleRate, mf.Channels
+			if mf.BitDepth != nil {
+				req.BitDepth = *mf.BitDepth
+			}
+		}
 	} else if format == "" || format == "raw" {
 		format = "raw"
 		bitRate = 0
@@ -176,7 +189,7 @@ func (s *Stream) Serve(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Accept-Ranges", "none")
 	w.Header().Set("Content-Type", s.ContentType())
 
-	if req.Params(r).BoolOr("estimateContentLength", false) {
+	if !s.mf.IsCueSubTrack() && s.bitRate > 0 && req.Params(r).BoolOr("estimateContentLength", false) {
 		length := strconv.Itoa(s.EstimatedContentLength())
 		log.Trace(ctx, "Estimated content-length", "contentLength", length)
 		w.Header().Set("Content-Length", length)
@@ -270,6 +283,8 @@ func NewTranscodingCache() TranscodingCache {
 			}
 
 			out, err := job.ms.transcoder.Transcode(transcodingCtx, ffmpeg.TranscodeOptions{
+				Segment:          cueSampleSegment(job.mf),
+				Duration:         job.mf.Duration,
 				Command:          command,
 				Format:           job.format,
 				FilePath:         job.filePath,

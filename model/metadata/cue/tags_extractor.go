@@ -2,6 +2,7 @@ package cue
 
 import (
 	"fmt"
+	"math"
 	"path"
 	"strconv"
 	"strings"
@@ -40,6 +41,10 @@ func (e *TagsExtractor) Extract(cueSheet *Cuesheet, cueFile string) ([]model.Raw
 		}
 		totalTracks := len(file.Tracks)
 		lastTrack := totalTracks - 1
+		starts, err := e.exactSampleStarts(file)
+		if err != nil {
+			return nil, err
+		}
 		for i, t := range file.Tracks {
 			tags := make(model.RawTags)
 
@@ -80,6 +85,20 @@ func (e *TagsExtractor) Extract(cueSheet *Cuesheet, cueFile string) ([]model.Raw
 				length = 0
 			}
 			addTagValue(model.TagCUETrackDuration, tags, makeDuration(length))
+			if starts != nil {
+				rate := int64(e.md.AudioProperties().SampleRate)
+				end := int64(0)
+				lengthSeconds := e.md.AudioProperties().Duration.Seconds() - float64(starts[i])/float64(rate)
+				if i < lastTrack {
+					end = starts[i+1]
+					lengthSeconds = float64(end-starts[i]) / float64(rate)
+				}
+				tags[model.TagCUETrackOffset.String()] = []string{strconv.FormatFloat(float64(starts[i])/float64(rate), 'f', 9, 64)}
+				tags[model.TagCUETrackDuration.String()] = []string{strconv.FormatFloat(lengthSeconds, 'f', 9, 64)}
+				addTagValue(model.TagCUEStartSample, tags, strconv.FormatInt(starts[i], 10))
+				addTagValue(model.TagCUEEndSample, tags, strconv.FormatInt(end, 10))
+				addTagValue(model.TagCUESourceRate, tags, strconv.FormatInt(rate, 10))
+			}
 
 			// Fallback to main metadata for missing tags
 			addTagValue(model.TagAlbum, tags, e.md.String(model.TagAlbum))
@@ -106,6 +125,49 @@ func (e *TagsExtractor) Extract(cueSheet *Cuesheet, cueFile string) ([]model.Raw
 	}
 
 	return result, nil
+}
+
+func (e *TagsExtractor) exactSampleStarts(file File) ([]int64, error) {
+	props := e.md.AudioProperties()
+	switch e.md.Suffix() {
+	case "flac", "wav", "ape":
+	case "wv", "wvp":
+		if props.BitDepth == 1 || strings.HasPrefix(strings.ToLower(props.Codec), "dsd") {
+			return nil, nil
+		}
+	case "m4a", "mp4", "alac":
+		if !strings.EqualFold(props.Codec, "alac") {
+			return nil, nil
+		}
+	default:
+		return nil, nil
+	}
+	if props.SampleRate <= 0 || props.SampleRate%75 != 0 || props.Duration <= 0 {
+		return nil, nil
+	}
+	starts := make([]int64, len(file.Tracks))
+	for i, track := range file.Tracks {
+		if track.TrackDataType != "AUDIO" || track.PreGap != 0 || track.PostGap != 0 || track.Flags&Pre != 0 {
+			return nil, nil
+		}
+		found := false
+		for _, index := range track.Index {
+			if float64(index.Frame)/75 >= props.Duration.Seconds() || uint64(index.Frame) > uint64(math.MaxInt64/int64(props.SampleRate/75)) {
+				return nil, fmt.Errorf("CUE track %d index is outside the audio", track.TrackNumber)
+			}
+			if index.Number == 1 {
+				starts[i] = int64(index.Frame) * int64(props.SampleRate/75)
+				found = true
+			}
+		}
+		if !found || (i > 0 && starts[i] <= starts[i-1]) {
+			return nil, fmt.Errorf("CUE track %d has invalid sample boundaries", track.TrackNumber)
+		}
+	}
+	if len(starts) > 0 {
+		starts[0] = 0
+	}
+	return starts, nil
 }
 
 func embeddedTracksFit(file File, duration time.Duration) bool {

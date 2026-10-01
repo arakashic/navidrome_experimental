@@ -163,6 +163,12 @@ var (
 		Command        string
 	}{
 		{
+			Name:           "wav audio",
+			TargetFormat:   "wav",
+			DefaultBitRate: 0,
+			Command:        "ffmpeg -i %s -map 0:a:0 -v 0 -c:a pcm_s16le -f wav -",
+		},
+		{
 			Name:           "mp3 audio",
 			TargetFormat:   "mp3",
 			DefaultBitRate: 192,

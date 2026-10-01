@@ -208,6 +208,12 @@ main:
     aliases: [ cuetrackoffset ]
   cuetrackduration:
     aliases: [ cuetrackduration ]
+  cuestartsample:
+    aliases: [ cuestartsample ]
+  cueendsample:
+    aliases: [ cueendsample ]
+  cuesourcerate:
+    aliases: [ cuesourcerate ]
   cuesheet:
     aliases: [ cuesheet ]
 

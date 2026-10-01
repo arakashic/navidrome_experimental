@@ -89,8 +89,11 @@ type MediaFile struct {
 	RGAlbumPeak          *float64 `structs:"rg_album_peak" json:"rgAlbumPeak"`
 	RGTrackGain          *float64 `structs:"rg_track_gain" json:"rgTrackGain"`
 	RGTrackPeak          *float64 `structs:"rg_track_peak" json:"rgTrackPeak"`
-	Offset               float32  `structs:"offset" json:"offset"`                 // Track offset in seconds for sub-tracks
-	SubTrack             int      `structs:"sub_track" json:"sub_track"`           // Index of the sub-track in a multi-track media, -1 if not a sub-track
+	Offset               float32  `structs:"offset" json:"offset"`       // Track offset in seconds for sub-tracks
+	SubTrack             int      `structs:"sub_track" json:"sub_track"` // Index of the sub-track in a multi-track media, -1 if not a sub-track
+	CueStartSample       int64    `structs:"cue_start_sample" json:"-"`
+	CueEndSample         int64    `structs:"cue_end_sample" json:"-"`
+	CueSourceRate        int      `structs:"cue_source_rate" json:"-"`
 	CUEFile              string   `structs:"cuefile" json:"cuefile" hash:"ignore"` // External CUE filename or EmbeddedCUEFile for embedded sheets
 
 	Tags         Tags         `structs:"tags" json:"tags,omitempty" hash:"ignore"`       // All imported tags from the original file

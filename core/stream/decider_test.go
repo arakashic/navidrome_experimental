@@ -309,7 +309,7 @@ var _ = Describe("Decider", func() {
 				mf := withProbe(&model.MediaFile{ID: "1", Suffix: "flac", Codec: "FLAC", BitRate: 1000, Channels: 2})
 				ci := &ClientInfo{
 					TranscodingProfiles: []Profile{
-						{Container: "wav", Protocol: ProtocolHTTP},
+						{Container: "aiff", Protocol: ProtocolHTTP},
 					},
 				}
 				decision, err := svc.MakeDecision(ctx, mf, ci, TranscodeOptions{})

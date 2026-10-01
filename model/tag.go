@@ -264,4 +264,7 @@ const (
 	TagCUETrackOffset   TagName = "cuetrackoffset"
 	TagCUETrackDuration TagName = "cuetrackduration"
 	TagCUEFile          TagName = "cuefile"
+	TagCUEStartSample   TagName = "cuestartsample"
+	TagCUEEndSample     TagName = "cueendsample"
+	TagCUESourceRate    TagName = "cuesourcerate"
 )

@@ -24,6 +24,8 @@ import (
 
 // TranscodeOptions contains all parameters for a transcoding operation.
 type TranscodeOptions struct {
+	Segment          *AudioSegment
+	Duration         float32
 	Command          string // DB command template (used to detect custom vs default)
 	Format           string // Target format (mp3, opus, aac, flac)
 	FilePath         string
@@ -82,6 +84,9 @@ func (e *ffmpeg) Transcode(ctx context.Context, opts TranscodeOptions) (io.ReadC
 	}
 	if err := fileExists(opts.FilePath); err != nil {
 		return nil, err
+	}
+	if opts.Segment != nil {
+		return e.transcodeSegment(ctx, opts)
 	}
 	var input io.Reader
 	if opts.MediaFile != nil && opts.MediaFile.IsCueSubTrack() {
@@ -390,6 +395,7 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 
 // formatCodecMap maps target format to ffmpeg codec flag.
 var formatCodecMap = map[string]string{
+	"wav":  "pcm_s16le",
 	"mp3":  "libmp3lame",
 	"opus": "libopus",
 	"aac":  "aac",
@@ -398,6 +404,7 @@ var formatCodecMap = map[string]string{
 
 // formatOutputMap maps target format to ffmpeg output format flag (-f).
 var formatOutputMap = map[string]string{
+	"wav":  "wav",
 	"mp3":  "mp3",
 	"opus": "opus",
 	"aac":  "adts",
@@ -419,7 +426,7 @@ func isDefaultCommand(format, command string) bool {
 }
 
 func subTrackRange(opts TranscodeOptions) (float32, float32, bool) {
-	if opts.MediaFile == nil || !opts.MediaFile.IsCueSubTrack() {
+	if opts.Segment != nil || opts.MediaFile == nil || !opts.MediaFile.IsCueSubTrack() {
 		return 0, 0, false
 	}
 	start := opts.SubTrackOffset + float32(opts.Offset)
@@ -479,10 +486,22 @@ func buildDynamicArgs(opts TranscodeOptions) []string {
 	// levels. Targeting the audio stream explicitly (s:a:0 rather than s:0) avoids
 	// pulling metadata from an embedded cover-art/video stream at index 0. Note:
 	// adts (AAC) output cannot hold tags, so these are a no-op there.
-	args = append(args, "-map_metadata", "0", "-map_metadata", "0:s:a:0")
-	args = append(args, subTrackMetadataArgs(opts.MediaFile)...)
+	if opts.Segment == nil {
+		args = append(args, "-map_metadata", "0", "-map_metadata", "0:s:a:0")
+		args = append(args, subTrackMetadataArgs(opts.MediaFile)...)
+	} else {
+		args = append(args, "-map_metadata", "-1", "-map_metadata:s:a", "-1")
+	}
 
 	if codec, ok := formatCodecMap[opts.Format]; ok {
+		if opts.Format == "wav" {
+			switch opts.BitDepth {
+			case 24:
+				codec = "pcm_s24le"
+			case 32:
+				codec = "pcm_s32le"
+			}
+		}
 		args = append(args, "-c:a", codec)
 	}
 

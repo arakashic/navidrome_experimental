@@ -69,6 +69,9 @@ func (md Metadata) ToMediaFile(libID int, folderID string) model.MediaFile {
 		mf.Offset = md.Offset()
 		mf.Duration = md.SubTrackLength()
 		mf.CUEFile = md.first(model.TagCUEFile)
+		mf.CueStartSample, _ = strconv.ParseInt(md.first(model.TagCUEStartSample), 10, 64)
+		mf.CueEndSample, _ = strconv.ParseInt(md.first(model.TagCUEEndSample), 10, 64)
+		mf.CueSourceRate = int(md.Int(model.TagCUESourceRate))
 	} else {
 		mf.Duration = md.Length()
 	}
