@@ -61,7 +61,7 @@ const FolderList = (props) => {
           .getList('folder', {
             pagination: { page: 1, perPage: 1 },
             sort: { field: 'id', order: 'ASC' },
-            filter: { library_id: libId, parent_id: '' },
+            filter: { library_id: libId, parent_id: '', missing: false },
           })
           .then(({ data: rootData }) => {
             if (rootData.length > 0) {
@@ -86,7 +86,7 @@ const FolderList = (props) => {
       {...props}
       perPage={500}
       sort={{ field: 'name', order: 'ASC' }}
-      filter={{ parent_id: rootFolderId }}
+      filter={{ parent_id: rootFolderId, missing: false }}
       actions={<FolderListActions />}
       pagination={<Pagination rowsPerPageOptions={[100, 250, 500, 1000]} />}
       title={<Title title={translate('menu.folders')} />}

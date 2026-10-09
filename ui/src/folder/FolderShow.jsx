@@ -142,6 +142,7 @@ const FolderShowLayout = (props) => {
         <ReferenceManyField
           reference="folder"
           target="parent_id"
+          filter={{ missing: false }}
           label=""
           sort={{ field: 'name', order: 'ASC' }}
           perPage={500}
