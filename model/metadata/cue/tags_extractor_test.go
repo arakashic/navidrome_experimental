@@ -106,3 +106,81 @@ func TestCUECompatibilityFallbacks(t *testing.T) {
 		})
 	}
 }
+
+type replayGainFileInfo struct{ os.FileInfo }
+
+func (replayGainFileInfo) BirthTime() time.Time { return time.Time{} }
+
+func TestCUEAlbumReplayGainFallback(t *testing.T) {
+	for _, source := range []string{"album.cue", ""} {
+		for _, tc := range []struct {
+			name               string
+			fileGain, filePeak string
+			cueGain, cuePeak   string
+			wantGain, wantPeak *float64
+		}{
+			{"file album values", "-3.20 dB", "0.9", "", "", new(-3.2), new(0.9)},
+			{"explicit cue values", "-3.20 dB", "0.9", "+2.00 dB", "0.8", new(2.0), new(0.8)},
+			{"explicit zero gain", "-3.20 dB", "0.9", "0.00 dB", "0.8", new(0.0), new(0.8)},
+			{"cue gain only", "-3.20 dB", "0.9", "+2.00 dB", "", new(2.0), new(0.9)},
+			{"cue peak only", "-3.20 dB", "0.9", "", "0.8", new(-3.2), new(0.8)},
+			{"no album values", "", "", "", "", nil, nil},
+			{"file zero gain only", "0.00 dB", "", "", "", new(0.0), nil},
+			{"file peak only", "", "0.9", "", "", nil, new(0.9)},
+			{"blank cue values", "-3.20 dB", "0.9", "   ", "   ", new(-3.2), new(0.9)},
+		} {
+			t.Run(source+"/"+tc.name, func(t *testing.T) {
+				fileInfo, err := os.Stat(t.TempDir())
+				require.NoError(t, err)
+				md := metadata.New("album.flac", metadata.Info{
+					FileInfo: replayGainFileInfo{fileInfo},
+					Tags: model.RawTags{
+						"replaygain_album_gain": {tc.fileGain},
+						"replaygain_album_peak": {tc.filePeak},
+						"replaygain_track_gain": {"-9.00 dB"},
+						"replaygain_track_peak": {"0.99"},
+					},
+					AudioProperties: metadata.AudioProperties{Duration: 3 * time.Second, SampleRate: 44100},
+				})
+				text := "FILE \"album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"First\"\n    REM REPLAYGAIN_TRACK_GAIN -1.50 dB\n    REM REPLAYGAIN_TRACK_PEAK 0.75\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    TITLE \"Second\"\n    INDEX 01 00:01:01\n"
+				if tc.cueGain != "" {
+					text = "REM REPLAYGAIN_ALBUM_GAIN \"" + tc.cueGain + "\"\n" + text
+				}
+				if tc.cuePeak != "" {
+					text = "REM REPLAYGAIN_ALBUM_PEAK \"" + tc.cuePeak + "\"\n" + text
+				}
+				sheet, err := ReadCue(strings.NewReader(text))
+				require.NoError(t, err)
+				extractor, err := NewExtractor(&md)
+				require.NoError(t, err)
+				tags, err := extractor.Extract(sheet, source)
+				require.NoError(t, err)
+				require.Len(t, tags, 2)
+				for _, raw := range tags {
+					mf := md.WithCUERawTags(raw).ToMediaFile(1, "folder")
+					require.Equal(t, tc.wantGain, mf.RGAlbumGain)
+					require.Equal(t, tc.wantPeak, mf.RGAlbumPeak)
+				}
+				first := md.WithCUERawTags(tags[0]).ToMediaFile(1, "folder")
+				second := md.WithCUERawTags(tags[1]).ToMediaFile(1, "folder")
+				require.Equal(t, new(-1.5), first.RGTrackGain)
+				require.Equal(t, new(0.75), first.RGTrackPeak)
+				require.Nil(t, second.RGTrackGain)
+				require.Nil(t, second.RGTrackPeak)
+				require.Equal(t, "First", first.Title)
+				require.Equal(t, "Second", second.Title)
+				require.Equal(t, int64(0), first.CueStartSample)
+				require.Equal(t, int64(44688), first.CueEndSample)
+				require.Equal(t, int64(44688), second.CueStartSample)
+				require.Equal(t, int64(0), second.CueEndSample)
+				require.Equal(t, 44100, first.CueSourceRate)
+				if tc.wantGain == nil {
+					require.NotContains(t, tags[0], model.TagReplayGainAlbumGain.String())
+				}
+				if tc.wantPeak == nil {
+					require.NotContains(t, tags[0], model.TagReplayGainAlbumPeak.String())
+				}
+			})
+		}
+	}
+}
